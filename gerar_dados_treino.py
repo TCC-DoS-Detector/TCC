@@ -15,9 +15,7 @@ merged_df = pd.read_csv(caminho_merged)
 ataques_desejados = [
     'DOS-UDP_FLOOD',
     'DOS-SYN_FLOOD',
-    'DDOS-PSHACK_FLOOD',    # TCP flood
     'DOS-HTTP_FLOOD',
-    'DDOS-HTTP_FLOOD'
 ]
 df_ataques = merged_df[merged_df['Label'].str.upper().isin([a.upper() for a in ataques_desejados])].copy()
 
