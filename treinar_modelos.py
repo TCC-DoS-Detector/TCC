@@ -31,19 +31,6 @@ print("Valores NaN após substituição:", X.isna().sum().sum())
 X.dropna(inplace=True)
 y = y[X.index]  # Ajustar y para corresponder às linhas restantes em X
 
-# 3. Codificação dos rótulos (APÓS LIMPEZA)
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
-
-# 4. Split dos dados
-X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded)
-
-# 5. Normalização
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
-
-
 # 3. Codificação dos rótulos
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
