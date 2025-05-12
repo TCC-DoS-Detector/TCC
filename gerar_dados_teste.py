@@ -15,9 +15,7 @@ merged_df = pd.read_csv(caminho_merged)
 ataques_desejados = [
     'DOS-UDP_FLOOD',
     'DOS-SYN_FLOOD',
-    'DDOS-PSHACK_FLOOD',    # TCP flood
     'DOS-HTTP_FLOOD',
-    'DDOS-HTTP_FLOOD'
 ]
 df_ataques = merged_df[merged_df['Label'].str.upper().isin([a.upper() for a in ataques_desejados])].copy()
 
@@ -34,7 +32,7 @@ df = pd.concat([df_ataques, benigno_df], ignore_index=True)
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
 # Exporta para CSV
-saida_csv = Path("dados") / "dataset_filtrado_teste.csv"
+saida_csv = Path("dados") / "dataset_teste_com_label.csv"
 df.to_csv(saida_csv, index=False)
 
 print(f"[INFO] Dataset combinado com sucesso! Total de amostras: {df.shape[0]}")

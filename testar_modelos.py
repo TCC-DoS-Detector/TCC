@@ -16,8 +16,9 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "dados"
 MODELS_DIR = BASE_DIR / "modelos"
 
-# Arquivos
-ARQUIVO_TESTE = "dataset_filtrado_teste.csv"
+ARQUIVO_TESTE_SEM_LABEL = "dataset_teste_sem_label.csv"
+ARQUIVO_TESTE_COM_LABEL = "dataset_teste_com_label.csv"
+
 MODELO_RF = "rf_model.pkl"
 MODELO_MLP = "mlp_model.pkl"
 SCALER = "standard_scaler.pkl"
@@ -36,27 +37,30 @@ except FileNotFoundError as e:
     exit()
 
 # =============================================
-# 3. CARREGAR NOVO DATASET DE TESTE
+# 3. CARREGAR DATASETS DE TESTE
 # =============================================
 try:
-    df = pd.read_csv(DATA_DIR / ARQUIVO_TESTE)
-except FileNotFoundError:
-    print(f"[ERRO] Dataset de teste '{ARQUIVO_TESTE}' não encontrado em {DATA_DIR.resolve()}")
+    df_sem_label = pd.read_csv(DATA_DIR / ARQUIVO_TESTE_SEM_LABEL)
+    df_com_label = pd.read_csv(DATA_DIR / ARQUIVO_TESTE_COM_LABEL)
+except FileNotFoundError as e:
+    print(f"[ERRO] Dataset não encontrado: {e}")
     exit()
 
-# Separar X e y
-if "Label" in df.columns:
-    X = df.drop("Label", axis=1)
-    y = df["Label"]
-    y_encoded = le.transform(y)
-else:
-    X = df.copy()
-    y_encoded = None
-    print("[AVISO] Dataset não contém a coluna 'Label'. Avaliação completa será limitada.")
+if len(df_sem_label) != len(df_com_label):
+    print("[ERRO] Os arquivos com e sem label devem ter o mesmo número de linhas.")
+    exit()
+
+if "Label" not in df_com_label.columns:
+    print("[ERRO] O arquivo com rótulo deve conter a coluna 'Label'.")
+    exit()
 
 # =============================================
 # 4. PRÉ-PROCESSAMENTO
 # =============================================
+X = df_sem_label.copy()
+y = df_com_label["Label"]
+y_encoded = le.transform(y)
+
 X.replace([np.inf, -np.inf], np.nan, inplace=True)
 X.fillna(X.mean(), inplace=True)
 X_scaled = scaler.transform(X)
@@ -83,9 +87,9 @@ def avaliar_modelo(nome, y_true, y_pred, y_proba):
     print("\nClassification Report:\n", classification_report(y_true, y_pred, target_names=le.classes_))
 
     # Matriz de confusão
+    cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(6, 4))
-    sns.heatmap(confusion_matrix(y_true, y_pred), annot=True, fmt="d",
-                cmap="Blues", xticklabels=le.classes_, yticklabels=le.classes_)
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=le.classes_, yticklabels=le.classes_)
     plt.title(f'Matriz de Confusão - {nome}')
     plt.xlabel('Predito')
     plt.ylabel('Real')
@@ -104,25 +108,28 @@ def avaliar_modelo(nome, y_true, y_pred, y_proba):
         plt.legend()
         plt.show()
 
+    # Exibir matriz como tabela
+    print("\nMatriz de confusão (valores brutos):")
+    for i, row in enumerate(cm):
+        print(f"{le.classes_[i]} ({i}): {row}")
+
 # =============================================
-# 7. AVALIAÇÃO
+# 7. AVALIAR MODELOS
 # =============================================
-if y_encoded is not None:
-    avaliar_modelo("Random Forest", y_encoded, y_pred_rf, y_proba_rf)
-    avaliar_modelo("MLP", y_encoded, y_pred_mlp, y_proba_mlp)
-else:
-    print("[INFO] Rótulos não disponíveis. Exibindo contagem das classes previstas:")
-    print("Random Forest:", pd.Series(y_pred_rf).value_counts())
-    print("MLP:", pd.Series(y_pred_mlp).value_counts())
+avaliar_modelo("Random Forest", y_encoded, y_pred_rf, y_proba_rf)
+avaliar_modelo("MLP", y_encoded, y_pred_mlp, y_proba_mlp)
 
-    # Salvar predições
-    df["Pred_RF"] = le.inverse_transform(y_pred_rf)
-    df["Pred_MLP"] = le.inverse_transform(y_pred_mlp)
-    df["Conf_RF"] = np.max(y_proba_rf, axis=1)
-    df["Conf_MLP"] = np.max(y_proba_mlp, axis=1)
+# =============================================
+# 8. SALVAR RESULTADOS EM CSV
+# =============================================
+df_resultado = df_sem_label.copy()
+df_resultado["Label"] = y
+df_resultado["Pred_RF"] = le.inverse_transform(y_pred_rf)
+df_resultado["Pred_MLP"] = le.inverse_transform(y_pred_mlp)
+df_resultado["Conf_RF"] = np.max(y_proba_rf, axis=1)
+df_resultado["Conf_MLP"] = np.max(y_proba_mlp, axis=1)
 
-    output_path = DATA_DIR / f"predicoes_{ARQUIVO_TESTE}"
-    df.to_csv(output_path, index=False)
-    print(f"[OK] Arquivo salvo com predições: {output_path}")
-
-print("\n Teste com nova base concluído.")
+saida_path = DATA_DIR / f"avaliacao_resultados.csv"
+df_resultado.to_csv(saida_path, index=False)
+print(f"\n Arquivo com predições e rótulos salvo em: {saida_path}")
+print(" Teste concluído com sucesso.")
