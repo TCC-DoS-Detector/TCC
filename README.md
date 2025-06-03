@@ -1,5 +1,6 @@
 ⚙️ Instalação
 Antes de rodar os scripts, instale as dependências necessárias com o seguinte comando:
+
 pip install pandas numpy scikit-learn imbalanced-learn joblib psutil tabulate
 
 📁 1. Estrutura de Pastas: -
