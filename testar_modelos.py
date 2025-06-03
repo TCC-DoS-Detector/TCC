@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 import joblib
 from pathlib import Path
 from sklearn.metrics import (
@@ -11,6 +9,9 @@ from sklearn.metrics import (
 )
 from sklearn.preprocessing import label_binarize
 from itertools import cycle
+from sklearn.metrics import precision_recall_fscore_support
+from tabulate import tabulate
+import time
 
 # =============================================
 # 1. CONFIGURAÇÃO DE CAMINHOS E NOMES DE ARQUIVOS
@@ -25,6 +26,8 @@ MODELO_RF = "rf_model.pkl"
 MODELO_MLP = "mlp_model.pkl"
 SCALER = "standard_scaler.pkl"
 ENCODER = "label_encoder.pkl"
+IMPUTER = "imputer.pkl"
+SELECTOR = "feature_selector.pkl"
 
 # =============================================
 # 2. CARREGAMENTO DOS MODELOS E PRÉ-PROCESSADORES
@@ -33,6 +36,8 @@ rf = joblib.load(MODELS_DIR / MODELO_RF)
 mlp = joblib.load(MODELS_DIR / MODELO_MLP)
 scaler = joblib.load(MODELS_DIR / SCALER)
 le = joblib.load(MODELS_DIR / ENCODER)
+imputer = joblib.load(MODELS_DIR / IMPUTER)
+selector = joblib.load(MODELS_DIR / SELECTOR)
 
 # =============================================
 # 3. CARREGAMENTO DOS DADOS DE TESTE
@@ -45,17 +50,25 @@ y_encoded = le.transform(y)
 # 4. PRÉ-PROCESSAMENTO DOS DADOS DE ENTRADA
 # =============================================
 X.replace([np.inf, -np.inf], np.nan, inplace=True)
-X.fillna(X.mean(), inplace=True)
-X_scaled = scaler.transform(X)
+X_imputed = imputer.transform(X)
+X_selected = selector.transform(X_imputed)
+X_scaled = scaler.transform(X_selected)
 
 # =============================================
 # 5. PREDIÇÃO DOS MODELOS
 # =============================================
-y_pred_rf = rf.predict(X)
-y_proba_rf = rf.predict_proba(X)
+start_rf = time.time()
+y_pred_rf = rf.predict(X_selected)
+y_proba_rf = rf.predict_proba(X_selected)
+rf_time = time.time() - start_rf
 
+start_mlp = time.time()
 y_pred_mlp = mlp.predict(X_scaled)
 y_proba_mlp = mlp.predict_proba(X_scaled)
+mlp_time = time.time() - start_mlp
+
+print(f"\n⏱️ Tempo de classificação - Random Forest: {rf_time:.4f} segundos")
+print(f"⏱️ Tempo de classificação - MLP: {mlp_time:.4f} segundos")
 
 # =============================================
 # 6. ANÁLISE DETALHADA DE ERROS
@@ -75,63 +88,57 @@ def analisar_erros(y_true, y_pred, labels):
             print(f"➡ Linha {i}: Previsto = {yp} | Real = {yt}")
 
 # =============================================
-# 7. FUNÇÃO DE AVALIAÇÃO DOS MODELOS
+# 7. AVALIAÇÃO DOS MODELOS
 # =============================================
 def avaliar_modelo(nome, y_true, y_pred, y_proba):
+    classes = le.classes_
+
     print(f"\n📊 Avaliação - {nome}")
     print("Accuracy:", accuracy_score(y_true, y_pred))
-    print("Precision:", precision_score(y_true, y_pred, average="weighted"))
-    print("Recall:", recall_score(y_true, y_pred, average="weighted"))
-    print("F1 Score:", f1_score(y_true, y_pred, average="weighted"))
-    print("ROC AUC:", roc_auc_score(y_true, y_proba, multi_class='ovr'))
+    print("Precision (weighted):", precision_score(y_true, y_pred, average="weighted", zero_division=0))
+    print("Recall (weighted):", recall_score(y_true, y_pred, average="weighted", zero_division=0))
+    print("F1 Score (weighted):", f1_score(y_true, y_pred, average="weighted", zero_division=0))
 
-    print("\nClassification Report:\n", classification_report(y_true, y_pred, target_names=le.classes_))
+    print("\n📝 Classification Report:\n", classification_report(y_true, y_pred, target_names=classes, digits=4))
 
     cm = confusion_matrix(y_true, y_pred)
-    plt.figure(figsize=(6, 4))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=le.classes_, yticklabels=le.classes_)
-    plt.title(f'Matriz de Confusão - {nome}')
-    plt.xlabel('Predito')
-    plt.ylabel('Real')
-    plt.tight_layout()
-    plt.show()
 
-    # Curva ROC - multi-classe
-    y_true_bin = label_binarize(y_true, classes=range(len(le.classes_)))
+    # ROC AUC por classe
+    y_true_bin = label_binarize(y_true, classes=range(len(classes)))
     n_classes = y_proba.shape[1]
-
-    fpr = dict()
-    tpr = dict()
     roc_auc = dict()
     for i in range(n_classes):
-        fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], y_proba[:, i])
-        roc_auc[i] = auc(fpr[i], tpr[i])
+        try:
+            roc_auc[i] = auc(*roc_curve(y_true_bin[:, i], y_proba[:, i])[:2])
+        except ValueError:
+            roc_auc[i] = float('nan')
 
-    colors = cycle(['aqua', 'darkorange', 'cornflowerblue', 'green', 'red', 'purple'])
-    plt.figure()
-    for i, color in zip(range(n_classes), colors):
-        plt.plot(fpr[i], tpr[i], color=color, lw=2,
-                 label=f'{le.classes_[i]} (AUC = {roc_auc[i]:0.2f})')
-
-    plt.plot([0, 1], [0, 1], 'k--', lw=2)
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('Falso Positivo (FPR)')
-    plt.ylabel('Verdadeiro Positivo (TPR)')
-    plt.title(f'Curva ROC Multi-classe - {nome}')
-    plt.legend(loc="lower right")
-    plt.grid()
-    plt.show()
-
-    # Erros principais
-    benign_index = np.where(le.classes_ == "BENIGN")[0][0]
+    # Análise detalhada de erros
+    benign_index = np.where(classes == "BENIGN")[0][0]
     false_positives = cm[:, benign_index].sum() - cm[benign_index, benign_index]
     false_negatives = cm[benign_index].sum() - cm[benign_index, benign_index]
 
-    print(f"\n❌ Falsos Positivos (BENIGNO como ATAQUE): {false_positives}")
-    print(f"❌ Falsos Negativos (ATAQUE como BENIGNO): {false_negatives}")
+    print(f"\n❌ Falsos Positivos (BENIGNO classificado como ATAQUE): {false_positives}")
+    print(f"❌ Falsos Negativos (ATAQUE classificado como BENIGNO): {false_negatives}")
 
-    # Erros linha a linha
+    # Métricas por classe
+    metrics_table = []
+    for i, classe in enumerate(classes):
+        metrics_table.append([
+            classe,
+            f"{precision_score(y_true, y_pred, labels=[i], average=None)[0]:.4f}",
+            f"{recall_score(y_true, y_pred, labels=[i], average=None)[0]:.4f}",
+            f"{f1_score(y_true, y_pred, labels=[i], average=None)[0]:.4f}",
+            f"{roc_auc[i]:.4f}"
+        ])
+
+    print("\n📌 Métricas por Classe:")
+    print(tabulate(metrics_table,
+                   headers=["Classe", "Precision", "Recall", "F1-Score", "ROC AUC"],
+                   tablefmt="grid",
+                   stralign="center",
+                   numalign="center"))
+
     print("\n📌 Erros detalhados:")
     analisar_erros(le.inverse_transform(y_true), le.inverse_transform(y_pred), le.classes_)
 
@@ -140,3 +147,64 @@ def avaliar_modelo(nome, y_true, y_pred, y_proba):
 # =============================================
 avaliar_modelo("Random Forest", y_encoded, y_pred_rf, y_proba_rf)
 avaliar_modelo("MLP", y_encoded, y_pred_mlp, y_proba_mlp)
+
+# =============================================
+# 9. TABELA COMPARATIVA DE MÉTRICAS POR CLASSE
+# =============================================
+def gerar_tabela_comparativa(y_true, y_pred_dict, y_proba_dict, label_encoder):
+    resultados = []
+    classes = label_encoder.classes_
+    y_true_bin = label_binarize(y_true, classes=range(len(classes)))
+
+    for nome_modelo, y_pred in y_pred_dict.items():
+        y_proba = y_proba_dict[nome_modelo]
+
+        precisao, recall, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, labels=range(len(classes)), zero_division=0
+        )
+
+        roc_auc_scores = []
+        for i in range(len(classes)):
+            try:
+                roc_auc = roc_auc_score(y_true_bin[:, i], y_proba[:, i])
+            except ValueError:
+                roc_auc = float('nan')
+            roc_auc_scores.append(roc_auc)
+
+        for idx, classe in enumerate(classes):
+            resultados.append({
+                "Modelo": nome_modelo,
+                "Classe": classe,
+                "Accuracy": accuracy_score(y_true, y_pred),
+                "Precision": precisao[idx],
+                "Recall": recall[idx],
+                "F1-Score": f1[idx],
+                "ROC AUC": roc_auc_scores[idx]
+            })
+
+    df_resultados = pd.DataFrame(resultados)
+    return df_resultados
+
+# Executa a comparação
+y_pred_dict = {
+    "Random Forest": y_pred_rf,
+    "MLP": y_pred_mlp
+}
+
+y_proba_dict = {
+    "Random Forest": y_proba_rf,
+    "MLP": y_proba_mlp
+}
+
+tabela_metricas = gerar_tabela_comparativa(y_encoded, y_pred_dict, y_proba_dict, le)
+
+print("\n📋 Tabela Comparativa de Métricas por Classe:\n")
+print(tabela_metricas.to_string(index=False))
+
+# Arredondar e exibir com tabulate
+tabela_metricas_formatada = tabela_metricas.copy()
+tabela_metricas_formatada[["Accuracy", "Precision", "Recall", "F1-Score", "ROC AUC"]] = \
+    tabela_metricas_formatada[["Accuracy", "Precision", "Recall", "F1-Score", "ROC AUC"]].round(6)
+
+print("\n📋 Tabela Comparativa de Métricas por Classe:\n")
+print(tabulate(tabela_metricas_formatada, headers='keys', tablefmt='grid', showindex=False))
